@@ -285,34 +285,51 @@ def mutual_information(X,y):
 	labels, counts = np.unique(y, return_counts=True)
 	lcounts={}
 	rcounts={}
-	pdb.set
+	if (X.shape[0]!=y.shape[0]):
+		print("ERROR ")
+
 	for i in range(0,labels.shape[0]):
-		rcounts[labels[i]]=counts[i]
-		lcounts[labels[i]]=0
+		lcounts[labels[i]]=counts[i]
+		rcounts[labels[i]]=0
 
 	global debugging,curr_attr,glob_attr
 	printnow = debugging and (curr_attr==glob_attr)
 	if printnow:
 		print("PARENT : ")
-		print(entropy(rcounts,n))
+		print(entropy(lcounts,n))
 		pdb.set_trace()
 
-	e_parent = entropy(rcounts,n)
+	e_parent = entropy(lcounts,n)
 	temp = np.zeros((n,1))
 	j=0
-	for i in ind_array:
+	prev=-1
+	#process in reverse, to deal with identical values
+	for i in reversed(ind_array):
 		lab = y[i]
-		lcounts[lab]+=1
-		rcounts[lab]-=1
 		# print(lcounts)
 		# print(rcounts)
-		f_l=(float((j+1))/n)
-		f_r=1-f_l
-		e_l =f_l* entropy(lcounts,n) #weighted entropies
+		#fixed error in iterative loading, didn't consider the case that many 
+		#indices can lead to same split
+		if (prev >=0 and X[prev]==X[i]):
+			gains[i]=gains[prev]
+			j+=1
+			rcounts[lab]+=1
+			lcounts[lab]-=1	
+			continue
+		prev=i
+
+		f_r=(float(j)/n)
+		f_l=1-f_r
 		e_r=f_r *entropy(rcounts,n)
+		e_l =f_l* entropy(lcounts,n) #weighted entropies
 		gains[i]= e_parent-(e_l+e_r)
 		temp[i]=j
 		j+=1
+
+		rcounts[lab]+=1
+		lcounts[lab]-=1		
+
+
 		if printnow  and j==n:
 			print (str(i) + " : LEFT "+ str(f_l*entropy(lcounts,n))+" RIGHT "+str(f_r*entropy(rcounts,n)))
 			pdb.set_trace()
@@ -326,7 +343,9 @@ def mutual_information(X,y):
 	# print("WINNER")
 	# w=np.argmax(gains)
 	# print(w,gains[w],temp[w])
-
+	# print("END GAIN : "+str(gains[ind_array[-1]]))
+	if printnow:
+		pdb.set_trace()
 	return gains
 
 #usual c4.5 split only for now
@@ -339,6 +358,8 @@ def bestMofNSplit(examples):
 	for i in range(0,d):
 		gains[:,i]=mutual_information(X[:,i],labels)
 	split_point = np.unravel_index(np.argmax(gains),gains.shape)
+	if (np.max(gains)<1e-6):
+		return None
 	# print(split_point)
 	# print(gains[split_point])
 	srule= SplitRule([(split_point[1],"lte",X[split_point])],1,1)
@@ -378,13 +399,9 @@ def partition(examples,srule):
 		gains = np.zeros((n,d))
 		for i in range(0,d):
 			curr_attr=i
-			gains[:,i]=mutual_information(X[:,i],labels)
+			gains[:,i]=mutual_information(X[:,i],Y)
 		split_point = np.unravel_index(np.argmax(gains),gains.shape)
-		print("THE SPLIT:")
-		print(split_point)
-		print(gains[split_point])
-		print(gains)
-		quit()
+		# quit()
 
 	return examples_l,examples_r
 
@@ -470,6 +487,10 @@ while not sortedQueue.empty():
 		examples_aug = examples
 
 	srule = bestMofNSplit(examples_aug)
+	if not srule:
+		#skip this node, its already pretty pure
+		#leave as leaf
+		continue
 	# quit()
 	# print(srule.splits)
 	examples_l,examples_r = partition(examples,srule)
