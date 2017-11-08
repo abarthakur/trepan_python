@@ -6,6 +6,8 @@ from scipy import stats
 
 import queue as Q
 
+import pdb
+
 ###########################################
 
 
@@ -66,23 +68,29 @@ class Oracle:
 		num_valid=0
 		print(n)
 		while(num_valid<n):
-			sample=self.genSample()
-			if (self.validSample(sample,constraints)):
-				label=self.oracle_example(sample)
-				X_examples[num_valid,:]=sample
-				lab_examples[num_valid]=label
-				num_valid+=1
-				print(num_valid)
+			sample=self.genSample(constraints)
+			label=self.oracle_example(sample)
+			X_examples[num_valid,:]=sample
+			lab_examples[num_valid]=label
+			num_valid+=1
+			# print(num_valid)
 											
-		return examples
+		return (X_examples,lab_examples)
 
 	#can be more efficient
-	def genSample(self):
+	def genSample(self,constraints):
 		sample = np.zeros(self.dimension)
 		#assuming features have independent distributions
 		for i in range(0,self.dimension):
 			# print(i)
-			sample[i]=self.distributions[i].resample(1)[0]
+			done=False
+			while not done :
+				# print("THIS IS I :" +str(i))
+				min_val = constraints.min_val(i)
+				max_val = constraints.max_val(i)
+				sample[i]=self.distributions[i].resample(1)[0]
+				if sample[i] > min_val and sample[i] < max_val :
+					done=True
 		return sample
 
 	def validSample(self,sample,constraints):
@@ -94,26 +102,85 @@ class Oracle:
 		print("ACCEPTED")
 		return True
 
+
 ###########################################
 
 class SplitRule:
 	#<= is left , > is right
-	def __init__(self,splits):
+	#m of n split
+
+	def __init__(self,splits,m,n):
 		self.splits=splits
+		self.m=m
+		self.n=n
+		self.op_dict= {"gte":self.gte,"lte":self.lte}
+		self.processSplits()
+
+
+	def processSplits(self):
+		self.max_dict={}
+		self.min_dict={}
+		for (attr,op_string,val) in self.splits:
+			if op_string in ["lte" ,"lt"]:
+				if attr not in self.max_dict:
+					self.max_dict[attr]=val
+				self.max_dict[attr] = max(self.max_dict[attr],val)
+			elif op_string in ["gte","gt"]:
+				if attr not in self.min_dict:
+					self.min_dict[attr]=val
+				self.min_dict[attr] = min(self.min_dict[attr],val)
+
+	#for building constraints
+	def invert(self):
+		splits2= []
+		inverse = {"gte":"lt","gt":"lte","lte":"gt","lt":"gte"}
+		for (attr,op_string,val) in self.splits:
+			op_string=inverse[op_string]
+			splits2.append((attr,op_string,val))
+		s2 = SplitRule(splits2,self.m,self.n)
+		return s2
+
+
+	def gte(self,arg1, arg2):
+		return arg1 >= arg2
+	def lte(self,arg1, arg2):
+		return arg1 <= arg2
+	def lt(self,arg1,arg2):
+		return arg1 < arg2
+	def gt(self,arg1,arg2):
+		return arg1 > arg2
+
 	def satisfied(self,sample):
-		(attr,val)=self.splits[0]
-		# print(attr,val)
-		# print(sample[attr])
-		if sample[attr] <= val:
-			return True
-		else:
+		sat=0
+
+		for split in self.splits:
+			(attr,op_string,val)=split
+			op = self.op_dict[op_string]
+			if op(sample[attr],val):
+				sat+=1
+			# print(attr,val)
+			# print(sample[attr])
+		if sat < self.m:
 			return False
+		else:
+			return True
+
+	def max_val(self,dim):
+		if dim in self.max_dict :
+			return self.max_dict[dim]
+		else :
+			return np.inf
+	def min_val(self,dim):
+		if dim in self.min_dict:
+			return self.min_dict[dim]
+		else :
+			return -np.inf
+
 
 ###########################################
 
 class Node:
 	def __init__(self,examples,total_size):
-		print("NEW NODE!")
 		self.leaf=True
 		self.left=None
 		self.right=None
@@ -122,14 +189,16 @@ class Node:
 
 		if self.num_examples==0:
 			self.priority=0
+			print("NEW NODE! with priority = "+ str(self.priority))
 			return
 
 		self.dominant = self.getDominantClass(examples)
 		self.misclassified=self.getMisclassified(examples)
 		self.fidelity = 1 - (float(self.misclassified)/self.num_examples)
 		self.reach = float(self.num_examples)/total_size
-		self.priority = self.reach* (1 - self.fidelity)
-		print(self.fidelity,self.reach,self.num_examples)
+		self.priority = (-1)*self.reach* (1 - self.fidelity)
+		# print(self.fidelity,self.reach,self.num_examples)
+		print("NEW NODE! with priority = "+ str(self.priority))
 
 	def getDominantClass(self,examples):
 		(trainX,labels) = examples
@@ -157,6 +226,8 @@ class Node:
 		return misCount
 
 	def classify(self,sample):
+		if self.leaf :
+			return self.dominant
 		if self.splitrule.satisfied(sample):
 			return self.left.classify(sample)
 		else:
@@ -165,6 +236,34 @@ class Node:
 
 ###########################################
 
+class Constraints :
+
+	def __init__(self,num_dim):
+		# self.cons_list=[]
+		self.num_dim=num_dim
+		self.max_list = np.zeros(num_dim)
+		self.min_list = np.zeros(num_dim)
+
+	def addRule(self,split):
+		for i in range(0,self.num_dim):
+			self.max_list[i]=max(self.max_list[i],split.max_val(i))
+			self.min_list[i]=min(self.min_list[i],split.min_val(i))
+
+	def max_val(self,dim):
+		return self.max_list[dim]
+
+	def min_val(self,dim):
+		return self.min_list[dim]
+
+	def copy(self):
+		c = Constraints(self.num_dim)
+		c.max_list=np.copy(self.max_list)
+		c.min_list=np.copy(self.min_list)
+		return c
+
+
+###########################################		
+
 def entropy(counts,n):
 	res=0
 	for key in counts:
@@ -172,7 +271,10 @@ def entropy(counts,n):
 		if (c==0):
 			continue
 		p = float(c)/n
+		# print(p)
 		res-=p*np.log2(p)
+
+	# print(res)
 	return res
 
 
@@ -183,15 +285,22 @@ def mutual_information(X,y):
 	labels, counts = np.unique(y, return_counts=True)
 	lcounts={}
 	rcounts={}
+	pdb.set
 	for i in range(0,labels.shape[0]):
 		rcounts[labels[i]]=counts[i]
 		lcounts[labels[i]]=0
-	# print("PARENT : ")
-	# print(rcounts)
+
+	global debugging,curr_attr,glob_attr
+	printnow = debugging and (curr_attr==glob_attr)
+	if printnow:
+		print("PARENT : ")
+		print(entropy(rcounts,n))
+		pdb.set_trace()
+
 	e_parent = entropy(rcounts,n)
 	temp = np.zeros((n,1))
 	j=0
-	for i in ind_array[:-1]:
+	for i in ind_array:
 		lab = y[i]
 		lcounts[lab]+=1
 		rcounts[lab]-=1
@@ -204,10 +313,16 @@ def mutual_information(X,y):
 		gains[i]= e_parent-(e_l+e_r)
 		temp[i]=j
 		j+=1
+		if printnow  and j==n:
+			print (str(i) + " : LEFT "+ str(f_l*entropy(lcounts,n))+" RIGHT "+str(f_r*entropy(rcounts,n)))
+			pdb.set_trace()
+			entropy(lcounts,n)
+			print( "PROBS : "+str(f_l)+" : "+str(f_r))
+			print("GAIN : "+str(gains[i]))
 		# print(lcounts)
 		# print(return_counts)
 		# print(i, gains[i])
-	gains[ind_array[-1]]=-np.inf
+	# gains[ind_array[-1]]=-np.inf
 	# print("WINNER")
 	# w=np.argmax(gains)
 	# print(w,gains[w],temp[w])
@@ -219,14 +334,16 @@ def bestMofNSplit(examples):
 	(X,labels)=examples
 	n=X.shape[0]
 	d=X.shape[1]
+	print("SPLITTING "+str(n)+" EXAMPLES")
 	gains = np.zeros((n,d))
 	for i in range(0,d):
 		gains[:,i]=mutual_information(X[:,i],labels)
 	split_point = np.unravel_index(np.argmax(gains),gains.shape)
 	# print(split_point)
 	# print(gains[split_point])
-	srule= SplitRule([(split_point[1],X[split_point])])
+	srule= SplitRule([(split_point[1],"lte",X[split_point])],1,1)
 	return srule
+
 
 def partition(examples,srule):
 	(X,Y) = examples
@@ -243,11 +360,41 @@ def partition(examples,srule):
 	print(len(er))
 	examples_l = (X[el,:],Y[el])
 	examples_r = (X[er,:],Y[er])
+	# pdb.set_trace()
+
+	if len(er)==0:
+		print("OOOOOOOOPS")
+		print(srule.splits)
+		n=X.shape[0]
+		d=X.shape[1]
+
+		global debugging
+		debugging=True
+		# pdb.set_trace()
+		global glob_attr,curr_attr
+		glob_attr=srule.splits[0][0]
+
+		print("SPLITTING "+str(n)+" EXAMPLES")
+		gains = np.zeros((n,d))
+		for i in range(0,d):
+			curr_attr=i
+			gains[:,i]=mutual_information(X[:,i],labels)
+		split_point = np.unravel_index(np.argmax(gains),gains.shape)
+		print("THE SPLIT:")
+		print(split_point)
+		print(gains[split_point])
+		print(gains)
+		quit()
+
 	return examples_l,examples_r
 
 ###########################################
-
-
+debugging=False
+glob_attr=-1
+curr_attr=-1
+np.random.seed(200)
+from tensorflow import set_random_seed
+set_random_seed(2)
 
 trainX, trainY = get_data("data/sat.trn")
 testX, testY = get_data("data/sat.tst")
@@ -278,7 +425,7 @@ model = createModel(trainX,trainY,num_classes)
 
 ##PARAMS
 Smin = 10
-MAX_NODES=20
+MAX_NODES=100
 
 oracle = Oracle(model,num_classes)
 oracle.setDistributions(trainX)
@@ -291,10 +438,13 @@ trainingSet=(trainX,labels)
 # print(labels[0:10])
 
 
+
+num_dim=trainX.shape[1]
+
 sortedQueue = Q.PriorityQueue()
 root = Node(trainingSet,total_size)
 root.leaf=False
-sortedQueue.put((root.priority,(0,root,trainingSet,[])))
+sortedQueue.put((root.priority,(0,root,trainingSet,Constraints(num_dim))))
 
 # quit()
 
@@ -304,19 +454,23 @@ while not sortedQueue.empty():
 	num_ex=examples[0].shape[0]
 	print("############PROCESSING "+str(num_ex)+" #############")
 
+	##need to check generate examples for bugs, and see if it passes all the constraints.
 	if num_ex<Smin:
 		print("NEED EXTRA")
 		(trainX,labels)= examples
 		n_extra = Smin - num_ex
 		(tX_or,lab_or) = oracle.oracle_constraints(constraints,n_extra)
+		# print(tX_or[:,1:5])
 		tX_aug = np.concatenate([trainX,tX_or],axis=0)
 		lab_aug = np.concatenate([labels,lab_or],axis=0)
+		# print(tX_aug[:,1:5])
 		examples_aug=(tX_aug,lab_aug)		
 	else :
 		print("ALL OK")
 		examples_aug = examples
 
 	srule = bestMofNSplit(examples_aug)
+	# quit()
 	# print(srule.splits)
 	examples_l,examples_r = partition(examples,srule)
 	lnode= Node(examples_l,total_size)
@@ -327,12 +481,14 @@ while not sortedQueue.empty():
 	node.splitrule=srule
 
 	if (num_nodes<MAX_NODES): # or oracle says stop
-		cons2 = constraints+[(True,srule)]
+		cons2 = constraints.copy()
+		cons2.addRule(srule)
 		p = lnode.priority
 		sortedQueue.put((p,(num_nodes,lnode,examples_l,cons2)))
 		num_nodes+=1
 	if (num_nodes<MAX_NODES): # or oracle says stop
-		cons2 = constraints+[(False,srule)]
+		cons2 = constraints.copy()
+		cons2.addRule(srule.invert())
 		p = rnode.priority
 		sortedQueue.put((p,(num_nodes,rnode,examples_r,cons2)))
 		num_nodes+=1
