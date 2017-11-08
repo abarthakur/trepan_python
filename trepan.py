@@ -381,27 +381,6 @@ def partition(examples,srule):
 	print(len(er))
 	examples_l = (X[el,:],Y[el])
 	examples_r = (X[er,:],Y[er])
-	# pdb.set_trace()
-
-	if len(er)==0:
-		print("OOOOOOOOPS")
-		print(srule.splits)
-		n=X.shape[0]
-		d=X.shape[1]
-
-		global debugging
-		debugging=True
-		# pdb.set_trace()
-		global glob_attr,curr_attr
-		glob_attr=srule.splits[0][0]
-
-		print("SPLITTING "+str(n)+" EXAMPLES")
-		gains = np.zeros((n,d))
-		for i in range(0,d):
-			curr_attr=i
-			gains[:,i]=mutual_information(X[:,i],Y)
-		split_point = np.unravel_index(np.argmax(gains),gains.shape)
-		# quit()
 
 	return examples_l,examples_r
 
@@ -441,8 +420,8 @@ from keras.layers import Dense
 model = createModel(trainX,trainY,num_classes)
 
 ##PARAMS
-Smin = 10
-MAX_NODES=100
+Smin = 30
+MAX_NODES=200
 
 oracle = Oracle(model,num_classes)
 oracle.setDistributions(trainX)
@@ -494,6 +473,28 @@ while not sortedQueue.empty():
 	# quit()
 	# print(srule.splits)
 	examples_l,examples_r = partition(examples,srule)
+
+	if examples_r[0].shape[0]==0 or examples_l[0].shape[0]==0:
+		el2,er2=partition(examples_aug,srule)
+		if el2[0].shape[0]==0 or er2[0].shape[0]==0:
+			print("An empty split? Shouldn't be possible")
+			print("Split Rule : "+str(srule.splits))
+			(xtemp,ytemp)=examples_aug
+			n=xtemp.shape[0]
+			d=xtemp.shape[1]
+			# global debugging
+			debugging=True
+			print("Entering debugging mode")
+			# pdb.set_trace()
+			# global glob_attr,curr_attr
+			glob_attr=srule.splits[0][0]
+			print("SPLITTING "+str(n)+" EXAMPLES")
+			gains = np.zeros((n,d))
+			for i in range(0,d):
+				curr_attr=i
+				gains[:,i]=mutual_information(xtemp[:,i],ytemp)
+			split_point = np.unravel_index(np.argmax(gains),gains.shape)
+
 	lnode= Node(examples_l,total_size)
 	rnode= Node(examples_r,total_size)
 	
@@ -515,7 +516,13 @@ while not sortedQueue.empty():
 		num_nodes+=1
 	
 
+fidelity=0
+n_test= testX.shape[0]
+for i in range(0,n_test):
+	lab = oracle.oracle_example(testX[i,:])
+	lab2 = root.classify(testX[i,:])
+	fidelity += (lab==lab2)
 
+fidelity=float(fidelity)/n_test
 
-
-
+print("Fidelity of the model is : "+str(fidelity))
