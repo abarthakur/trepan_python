@@ -40,66 +40,86 @@ def createModel (trainX,trainY,num_classes):
 ###########################################
 
 class Oracle:
-	def __init__(self,network,num_classes):
+	'''
+	Wrapper object for the ANN which we wish to imitate. Also contains logic to generate examples from the 
+	constrained distribution of training examples.
+	'''
+
+	def __init__(self,network,num_classes,trainX):
 		self.network=network
 		self.num_classes=num_classes
+		self.dimension=trainX.shape[1]
+		self.feature_distributions=self.generate_feature_distributions(trainX)
 
-	def setDistributions(self,X):
-		self.distributions =[]
+	def generate_feature_distributions(self,trainX):
+		'''
+		Returns a list of objects modeling the probability distributions of each feature.
+		For continuous features we use Gaussian Kernel Density Estimation from scipy.stats
+		'''
+
+		feature_distributions =[]
 		#only consider continuous distributions
-		self.dimension= X.shape[1]
 		for i in range(0,self.dimension):
-			values = X[:,i].reshape(X.shape[0])
-			kernel = stats.gaussian_kde(values,bw_method='silverman')
-			# print(kernel)
-			# print(kernel.resample(1))
-			self.distributions.append(kernel)
+			feature_values = trainX[:,i].reshape(trainX.shape[0])
+			kernel = stats.gaussian_kde(feature_values,bw_method='silverman')
+			feature_distributions.append(kernel)
+		return feature_distributions
 
-	def oracle_example(self,example):
-		#print(example.shape)
+	def get_oracle_label(self,example):
+		'''
+		Returns the label predicated by the oracle network for example
+		'''
+
 		onehot =self.network.predict(np.array([example])).reshape(self.num_classes)
-		# print(onehot)
 		return np.argmax(onehot)
 
-	def oracle_constraints(self,constraints,n):
-		#read each constraint
-		X_examples= np.zeros((n,self.dimension))
-		lab_examples = np.zeros(n)
-		num_valid=0
-		print(n)
-		while(num_valid<n):
-			sample=self.genSample(constraints)
-			label=self.oracle_example(sample)
-			X_examples[num_valid,:]=sample
-			lab_examples[num_valid]=label
-			num_valid+=1
-			# print(num_valid)
+	def generate_constrained_examples_with_labels(self,constraints,num_examples):
+		'''
+		Returns a tuple of examples,oracle_labels , where examples are drawn from the distribution of the
+		training examples, after constraints have been applied to it.
+		'''
+
+		examples= np.zeros((num_examples,self.dimension))
+		oracle_labels = np.zeros(num_examples)
+		i=0
+		print(num_examples)
+		for i in range(0,num_examples):
+			example=self.generate_constrained_example(constraints)
+			label=self.get_oracle_label(example)
+			examples[i,:]=example
+			oracle_labels[i]=label
 											
-		return (X_examples,lab_examples)
+		return (examples,oracle_labels)
 
 	#can be more efficient
-	def genSample(self,constraints):
-		sample = np.zeros(self.dimension)
-		#assuming features have independent distributions
-		for i in range(0,self.dimension):
-			# print(i)
-			done=False
-			while not done :
-				# print("THIS IS I :" +str(i))
-				min_val = constraints.min_val(i)
-				max_val = constraints.max_val(i)
-				sample[i]=self.distributions[i].resample(1)[0]
-				if sample[i] > min_val and sample[i] < max_val :
-					done=True
-		return sample
+	def generate_constrained_example(self,constraints):
+		'''
+		Returns an example drawn from the distribution of the training examples, after constraints have been applied to it.
+		'''
 
-	def validSample(self,sample,constraints):
-		for cons in constraints:
-			(satisfied,splitrule)=cons
-			if satisfied!=splitrule.satisfied(sample):
-				# print("REJECTED")
+		example = np.zeros(self.dimension)
+		#assuming features have independent distributions, sample each feature separately
+		for i in range(0,self.dimension):
+			min_val = constraints.min_val(i)
+			max_val = constraints.max_val(i)
+			done=False
+			#generate the ith feature by rejection sampling
+			while not done :
+				#sample i^th feature from its distribution
+				example[i]=self.feature_distributions[i].resample(1)[0]
+				if example[i] > min_val and example[i] < max_val :
+					done=True
+		return example
+
+	def is_valid_example(self,example,constraints):
+		'''
+		Returns True if sample satisfies given constraints, else False
+		'''
+		
+		for constraint in constraints:
+			(satisfied,splitrule)=constraint
+			if satisfied!=splitrule.satisfied(example):
 				return False
-		print("ACCEPTED")
 		return True
 
 
@@ -423,12 +443,11 @@ model = createModel(trainX,trainY,num_classes)
 Smin = 30
 MAX_NODES=200
 
-oracle = Oracle(model,num_classes)
-oracle.setDistributions(trainX)
+oracle = Oracle(model,num_classes,trainX)
 
 labels = np.zeros((trainX.shape[0]))
 for i in range(0,trainX.shape[0]):
-	labels[i]=oracle.oracle_example(trainX[i,:])
+	labels[i]=oracle.get_oracle_label(trainX[i,:])
 	# print(labels[i])
 trainingSet=(trainX,labels)
 # print(labels[0:10])
@@ -455,7 +474,7 @@ while not sortedQueue.empty():
 		print("NEED EXTRA")
 		(trainX,labels)= examples
 		n_extra = Smin - num_ex
-		(tX_or,lab_or) = oracle.oracle_constraints(constraints,n_extra)
+		(tX_or,lab_or) = oracle.generate_constrained_examples_with_labels(constraints,n_extra)
 		# print(tX_or[:,1:5])
 		tX_aug = np.concatenate([trainX,tX_or],axis=0)
 		lab_aug = np.concatenate([labels,lab_or],axis=0)
@@ -519,7 +538,7 @@ while not sortedQueue.empty():
 fidelity=0
 n_test= testX.shape[0]
 for i in range(0,n_test):
-	lab = oracle.oracle_example(testX[i,:])
+	lab = oracle.get_oracle_label(testX[i,:])
 	lab2 = root.classify(testX[i,:])
 	fidelity += (lab==lab2)
 
