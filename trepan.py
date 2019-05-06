@@ -469,21 +469,25 @@ class SplitFinder:
 
 
 def partition(examples,srule):
-	(X,Y) = examples
-	n = X.shape[0]
-	# print(X[1:5,:])
-	el=[]
-	er=[]
-	for i in range(0,n):
-		if srule.satisfied(X[i,:]):
-			el.append(i)
-		else:
-			er.append(i)
-	print(len(el))
-	print(len(er))
-	examples_l = (X[el,:],Y[el])
-	examples_r = (X[er,:],Y[er])
+	'''
+	Utility function to partition an example set by filtering with a SplitRule object.
 
+	Returns
+	-------
+	examples_l,examples_r : np arrays of shape (*,num_dimensions)
+	'''
+	(X,y) = examples
+	num_examples = X.shape[0]
+	left_partition,right_partition=[[],[]]
+
+	for idx in range(0,num_examples):
+		if srule.satisfied(X[idx,:]):
+			left_partition.append(idx)
+		else:
+			right_partition.append(idx)
+
+	examples_l = (X[left_partition,:],y[left_partition])
+	examples_r = (X[right_partition,:],y[right_partition])
 	return examples_l,examples_r
 
 ###########################################
