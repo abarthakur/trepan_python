@@ -549,7 +549,6 @@ num_dim=trainX.shape[1]
 
 sortedQueue = Q.PriorityQueue()
 root = Node(training_set,total_size)
-root.leaf=False
 sortedQueue.put((root.priority,(0,root,(trainX,labels),Constraints(num_dim))))
 
 # quit()
@@ -557,6 +556,7 @@ sortedQueue.put((root.priority,(0,root,(trainX,labels),Constraints(num_dim))))
 num_nodes=1
 while not sortedQueue.empty():
 	(p, (t,node, examples,constraints))=sortedQueue.get()
+	assert(node.leaf)
 	num_ex=examples[0].shape[0]
 	print("############PROCESSING "+str(num_ex)+" #############")
 
@@ -619,6 +619,7 @@ while not sortedQueue.empty():
 	node.left = lnode
 	node.right = rnode
 	node.splitrule=srule
+	node.leaf=False
 
 	if (num_nodes<MAX_NODES): # or oracle says stop
 		cons2 = constraints.copy()
