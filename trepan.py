@@ -4,9 +4,12 @@ import pandas
 
 from scipy import stats
 
-import queue as Q
+import queue
 
 import pdb
+
+from keras.models import Sequential
+from keras.layers import Dense
 
 ###########################################
 
@@ -496,9 +499,7 @@ def partition(examples,srule):
 	return examples_l,examples_r
 
 ###########################################
-debugging=False
-glob_attr=-1
-curr_attr=-1
+
 np.random.seed(200)
 from tensorflow import set_random_seed
 set_random_seed(2)
@@ -506,134 +507,94 @@ set_random_seed(2)
 trainX, trainY = get_data("data/sat.trn")
 testX, testY = get_data("data/sat.tst")
 
-# from sklearn import datasets
-# iris = datasets.load_iris()
-# trainX = iris.data[:, :2]  # we only take the first two features.
-# Y = iris.target
-# # print(trainX.shape)
-# # print(Y.shape)
-# idx=list(range(0,30))+list(range(50,80))+list(range(100,130))
-# trainX=trainX[idx,:]
-# Y=Y[idx]
-# # print(trainX.shape)
-# # print(Y.shape)
-# trainY=np.zeros((Y.shape[0],3))
-# for i in range(0,Y.shape[0]):
-# 	trainY[i,Y[i]]=1
-
-
 num_classes = trainY.shape[1]
-total_size = trainX.shape[0]
-print(num_classes,total_size)
+num_dimensions = trainX.shape[1]
+total_num_examples = trainX.shape[0]
+print(num_classes,total_num_examples)
 
-from keras.models import Sequential
-from keras.layers import Dense
 model = createModel(trainX,trainY,num_classes)
 
 ##PARAMS
-Smin = 30
+MIN_EXAMPLES_PER_NODE = 30
 MAX_NODES=200
-
 oracle = Oracle(model,num_classes,trainX)
 
+#generate labels from oracle
 labels = np.zeros((trainX.shape[0]))
 for i in range(0,trainX.shape[0]):
 	labels[i]=oracle.get_oracle_label(trainX[i,:])
-	# print(labels[i])
-training_set = {"trainX":trainX,"labels":labels}
-# print(labels[0:10])
 
+all_examples=(trainX,labels)
+all_examples_dict={"trainX":trainX,"labels":labels}
 
-
-num_dim=trainX.shape[1]
-
-sortedQueue = Q.PriorityQueue()
-root = Node(training_set,total_size)
-sortedQueue.put((root.priority,(0,root,(trainX,labels),Constraints(num_dim))))
-
-# quit()
+#initialize queue with root
+sortedQueue = queue.PriorityQueue()
+root = Node(all_examples_dict,total_num_examples)
+sortedQueue.put((root.priority,0,root,all_examples,Constraints(num_dimensions)))
 
 num_nodes=1
 while not sortedQueue.empty():
-	(p, (t,node, examples,constraints))=sortedQueue.get()
+	(p, tiebreaker, node, examples, constraints)=sortedQueue.get()
+	num_examples=examples[0].shape[0]
 	assert(node.leaf)
-	num_ex=examples[0].shape[0]
-	print("############PROCESSING "+str(num_ex)+" #############")
+	assert(num_examples>0)
 
-	##need to check generate examples for bugs, and see if it passes all the constraints.
-	if num_ex<Smin:
+	print("############PROCESSING "+str(num_examples)+" #############")
+
+	if num_examples<MIN_EXAMPLES_PER_NODE:
 		print("NEED EXTRA")
 		(trainX,labels)= examples
-		n_extra = Smin - num_ex
-		(tX_or,lab_or) = oracle.generate_constrained_examples_with_labels(constraints,n_extra)
-		# print(tX_or[:,1:5])
-		tX_aug = np.concatenate([trainX,tX_or],axis=0)
-		lab_aug = np.concatenate([labels,lab_or],axis=0)
-		# print(tX_aug[:,1:5])
-		examples_aug=(tX_aug,lab_aug)		
+		num_required = MIN_EXAMPLES_PER_NODE - num_examples
+		(trainX_oracle,labels_oracle) = oracle.generate_constrained_examples_with_labels(constraints,num_required)
+		trainX_aug = np.concatenate([trainX,trainX_oracle],axis=0)
+		labels_aug = np.concatenate([labels,labels_oracle],axis=0)
+		examples_aug=(trainX_aug,labels_aug)		
 	else :
 		print("ALL OK")
 		examples_aug = examples
 
 	srule = SplitFinder.find_best_m_of_n_split(examples_aug)
+	#a good split was not found, so keep as leaf
 	if not srule:
-		#skip this node, its already pretty pure
-		#leave as leaf
 		continue
-	# quit()
-	# print(srule.splits)
 	examples_l,examples_r = partition(examples,srule)
 
-	# Even though the trivial splits are avoided with examples_aug, 
-	# the splitrule may still split the examples trivially
-	# Trivial splits need to be avoided because the max_proportion = 0 < threshold
+	#even though the trivial splits are avoided with examples_aug, 
+	#the splitrule may still split the examples trivially
+	#trivial split, so keep as leaf
 	if len(examples_l[0])==0 or len(examples_r[0])==0:
 		continue
 
-	if examples_r[0].shape[0]==0 or examples_l[0].shape[0]==0:
-		el2,er2=partition(examples_aug,srule)
-		if el2[0].shape[0]==0 or er2[0].shape[0]==0:
-			print("An empty split? Shouldn't be possible")
-			print("Split Rule : "+str(srule.splits))
-			(xtemp,ytemp)=examples_aug
-			n=xtemp.shape[0]
-			d=xtemp.shape[1]
-			# global debugging
-			debugging=True
-			print("Entering debugging mode")
-			# pdb.set_trace()
-			# global glob_attr,curr_attr
-			glob_attr=srule.splits[0][0]
-			print("SPLITTING "+str(n)+" EXAMPLES")
-			gains = np.zeros((n,d))
-			for i in range(0,d):
-				curr_attr=i
-				gains[:,i]=mutual_information(xtemp[:,i],ytemp)
-			split_point = np.unravel_index(np.argmax(gains),gains.shape)
+	#TODO: Add stop criterion thresholding the proportion of dominant class, similar to 
+	
+	#number of nodes will exceed MAX_NODES if we make the split, so keep as leaf
+	if (MAX_NODES - num_nodes<2):
+		continue
 
+	#split the node, and make as internal
 	examples_l_dict={"trainX":examples_l[0],"labels":examples_l[1]}
 	examples_r_dict={"trainX":examples_r[0],"labels":examples_r[1]}
-	lnode= Node(examples_l_dict,total_size)
-	rnode= Node(examples_r_dict,total_size)
-	
-	node.left_child = lnode
-	node.right_child = rnode
+	left_child= Node(examples_l_dict,total_num_examples)
+	right_child= Node(examples_r_dict,total_num_examples)
+	node.left_child = left_child
+	node.right_child = right_child
 	node.splitrule=srule
 	node.leaf=False
 
-	if (num_nodes<MAX_NODES): # or oracle says stop
-		cons2 = constraints.copy()
-		cons2.addRule(srule)
-		p = lnode.priority
-		sortedQueue.put((p,(num_nodes,lnode,examples_l,cons2)))
-		num_nodes+=1
-	if (num_nodes<MAX_NODES): # or oracle says stop
-		cons2 = constraints.copy()
-		cons2.addRule(srule.invert())
-		p = rnode.priority
-		sortedQueue.put((p,(num_nodes,rnode,examples_r,cons2)))
-		num_nodes+=1
+	#add child nodes
+	constraints_left = constraints.copy()
+	constraints_left.addRule(srule)
+	priority = left_child.priority
+	sortedQueue.put((priority,num_nodes,left_child,examples_l,constraints_left))
+	num_nodes+=1
 	
+	constraints_right = constraints.copy()
+	constraints_right .addRule(srule.invert())
+	priority = right_child.priority
+	sortedQueue.put((priority,num_nodes,right_child,examples_r,constraints_right))
+	num_nodes+=1
+	
+
 
 fidelity=0
 n_test= testX.shape[0]
