@@ -34,7 +34,7 @@ def createModel (trainX,trainY,num_classes):
 	model.add(Dense(16, activation="sigmoid"))
 	model.add(Dense(num_classes, activation="softmax"))
 	model.compile(loss="categorical_crossentropy", optimizer="adam", metrics=['accuracy'])
-	model.fit(trainX, trainY, epochs=20, batch_size=10) # epochs=150
+	model.fit(trainX, trainY, epochs=5, batch_size=10) # epochs=150
 	return model
 
 ###########################################
@@ -311,106 +311,161 @@ class Constraints :
 
 ###########################################		
 
-def entropy(counts,n):
-	res=0
-	for key in counts:
-		c = counts[key]
-		if (c==0):
-			continue
-		p = float(c)/n
-		# print(p)
-		res-=p*np.log2(p)
+class SplitFinder:
+	'''
+	Utility class containing algorithm to find splits, and utility functions to calculate certain mathematical formulae.
 
-	# print(res)
-	return res
+	'''
 
 
-def mutual_information(X,y):
-	gains = np.zeros(X.shape)
-	n = X.shape[0]
-	ind_array=np.argsort(X)
-	labels, counts = np.unique(y, return_counts=True)
-	lcounts={}
-	rcounts={}
-	if (X.shape[0]!=y.shape[0]):
-		print("ERROR ")
+	@staticmethod
+	def entropy(class_frequencies,num_examples):
+		'''
+		Entropy of a data point is the "surprisal" value of it. 
+		Less probable points have a higher value of entropy.
 
-	for i in range(0,labels.shape[0]):
-		lcounts[labels[i]]=counts[i]
-		rcounts[labels[i]]=0
+		Mathematically, entropy defined for a set of categorical data points is,
+		H(x)= - \sum_{i=1}^{n} ( P(X=class_i) \log P(X=class_i) )
 
-	global debugging,curr_attr,glob_attr
-	printnow = debugging and (curr_attr==glob_attr)
-	if printnow:
-		print("PARENT : ")
-		print(entropy(lcounts,n))
-		pdb.set_trace()
+		Overall for a set of data points, entropy is more for a more uncertain distribution.
+		So, for a homogenous set of points, the entropy is the lowest.
+		Entropy is always positive.
+		'''
+		entropy=0
+		for class_i in class_frequencies:
+			frequency = class_frequencies[class_i]
+			#lim(x->0) xlogx = 0
+			if (frequency==0):	
+				continue
+			prob = float(frequency)/num_examples
+			entropy+= (-1) * prob*np.log2(prob)
+		return entropy
 
-	e_parent = entropy(lcounts,n)
-	temp = np.zeros((n,1))
-	j=0
-	prev=-1
-	#process in reverse, to deal with identical values
-	for i in reversed(ind_array):
-		lab = y[i]
-		# print(lcounts)
-		# print(rcounts)
-		#fixed error in iterative loading, didn't consider the case that many 
-		#indices can lead to same split
-		if (prev >=0 and X[prev]==X[i]):
-			gains[i]=gains[prev]
-			j+=1
-			rcounts[lab]+=1
-			lcounts[lab]-=1	
-			continue
-		prev=i
+	
+	@staticmethod
+	def mutual_information(X,y):
+		'''
+		Information gain is the difference in entropy between the original state & the new state.
+		In this case it is 
+		IG(X)	= H(X) - fraction(X<=split) * H(X|X<=split) - fraction(X>split) * H(X|X>split)
+				= H_parent - frac_l * H_l - frac_r * H_r
 
-		f_r=(float(j)/n)
-		f_l=1-f_r
-		e_r=f_r *entropy(rcounts,n)
-		e_l =f_l* entropy(lcounts,n) #weighted entropies
-		gains[i]= e_parent-(e_l+e_r)
-		temp[i]=j
-		j+=1
+		Assuming a "less than equal to" split rule.
 
-		rcounts[lab]+=1
-		lcounts[lab]-=1		
+		Parameters
+		---------
+		X : np array of shape (num_examples,)
+		y : np array of shape (num_examples,) 
+			the category/class labels
+
+		Returns:
+		gains : np array of shape (num_examples,1)
+				ith value corresponds to taking the ith example as the split point
+
+		'''
+
+		num_examples=X.shape[0]
+		assert(y.shape[0]==num_examples)
+		assert(len(X.shape)==1 and len(y.shape)==1)
+
+		#get unique classes and their frequencies
+		classes, class_frequencies = np.unique(y, return_counts=True)
+		num_classes=classes.shape[0]
+
+		#get sorted indices for X, sorting along axis=0 (only axis here)
+		sorted_indices=np.argsort(X,axis=0)
+		
+		#intialize gains array
+		gains = np.zeros(num_examples)
+
+		#initialize splits with all points in the left partition
+		left_frequencies={}
+		right_frequencies={}
+		for i in range(0,num_classes):
+			left_frequencies[classes[i]]=class_frequencies[i]
+			right_frequencies[classes[i]]=0
+
+		entropy_parent = SplitFinder.entropy(left_frequencies,num_examples)
+		prev_idx=None
+		shifted=0
+		'''
+		Note: Since this function calculates the IG values iteratively, we need to consider the case of identical values,
+		and skip them, since they provide the same split.
+
+		Start with the highest value. (This is the trivial split)
+		While calculating the gain, the split point is always in the left set since "<=" rule is use.
+		At the end, we shift an example from the left child to the right child (except for case of identical values).
+
+		'''
+		for idx in reversed(sorted_indices):
+			label = y[idx]
+
+			#case : identical value
+			if (prev_idx and X[prev_idx]==X[idx]):
+				gains[idx]=gains[prev_idx]
+			else:
+				frac_right=(float(shifted)/num_examples)
+				frac_left=1-frac_right
+				gains[idx]=entropy_parent
+				gains[idx]-= frac_left* SplitFinder.entropy(left_frequencies,num_examples)
+				gains[idx]-= frac_right* SplitFinder.entropy(right_frequencies,num_examples)
+			shifted+=1
+			right_frequencies[label]+=1
+			left_frequencies[label]-=1		
+			prev_idx=idx
+		return gains
 
 
-		if printnow  and j==n:
-			print (str(i) + " : LEFT "+ str(f_l*entropy(lcounts,n))+" RIGHT "+str(f_r*entropy(rcounts,n)))
-			pdb.set_trace()
-			entropy(lcounts,n)
-			print( "PROBS : "+str(f_l)+" : "+str(f_r))
-			print("GAIN : "+str(gains[i]))
-		# print(lcounts)
-		# print(return_counts)
-		# print(i, gains[i])
-	# gains[ind_array[-1]]=-np.inf
-	# print("WINNER")
-	# w=np.argmax(gains)
-	# print(w,gains[w],temp[w])
-	# print("END GAIN : "+str(gains[ind_array[-1]]))
-	if printnow:
-		pdb.set_trace()
-	return gains
+	@staticmethod
+	def find_best_binary_split(examples):
+		'''
+		Find the best binary split along a single axis, according to maximum information gain.
+		This is the same split as used in the C4.5 algorithm, Quinlan 1993
 
-#usual c4.5 split only for now
-def bestMofNSplit(examples):
-	(X,labels)=examples
-	n=X.shape[0]
-	d=X.shape[1]
-	print("SPLITTING "+str(n)+" EXAMPLES")
-	gains = np.zeros((n,d))
-	for i in range(0,d):
-		gains[:,i]=mutual_information(X[:,i],labels)
-	split_point = np.unravel_index(np.argmax(gains),gains.shape)
-	if (np.max(gains)<1e-6):
-		return None
-	# print(split_point)
-	# print(gains[split_point])
-	srule= SplitRule([(split_point[1],"lte",X[split_point])],1,1)
-	return srule
+		Returns
+		-------
+		srule : SplitRule object 
+		'''
+		(X,labels)=examples
+		num_examples=X.shape[0]
+		num_dimensions=X.shape[1]
+		print("SPLITTING "+str(num_examples)+" EXAMPLES")
+
+		#initialize gains 
+		gains = np.zeros((num_examples,num_dimensions))
+		#calculate gains considering each feature
+		for i in range(0,num_dimensions):
+			gains[:,i]= SplitFinder.mutual_information(np.reshape(X[:,i],num_examples),
+														np.reshape(labels,num_examples))
+
+		#low gains = parent purity is not increased by much - so don't split
+		if (np.max(gains)<1e-6):
+			return None
+
+		#get split point (sample_idx,feature_idx), i.e. the point with max gains
+		split_point = np.unravel_index(np.argmax(gains),gains.shape)
+		
+		#build split rule object
+		feature_to_split=split_point[1]
+		split_value=X[split_point]
+		splits=[(feature_to_split,"lte",split_value)]
+		#create a simple split rule, i.e. 1-of-1
+		srule= SplitRule(splits,1,1)
+		return srule
+
+
+	@staticmethod
+	def find_best_m_of_n_split(examples):
+		'''
+		Find the best m-of-n split. An m-of-n split, is a splitting function composed of n boolean expressions.
+		An m-of-n split is satisifed if at least m-of-n expressions is satisfied
+		TODO: Right now just returns a binary split
+		'''
+
+		seed= SplitFinder.find_best_binary_split(examples)
+		##TODO find best m-of-n split with hill climbing method, with C4.5 split as 
+		srule=seed
+		return srule
 
 
 def partition(examples,srule):
@@ -511,7 +566,7 @@ while not sortedQueue.empty():
 		print("ALL OK")
 		examples_aug = examples
 
-	srule = bestMofNSplit(examples_aug)
+	srule = SplitFinder.find_best_m_of_n_split(examples_aug)
 	if not srule:
 		#skip this node, its already pretty pure
 		#leave as leaf
