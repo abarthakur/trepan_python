@@ -200,58 +200,85 @@ class SplitRule:
 ###########################################
 
 class Node:
-	def __init__(self,examples,total_size):
+	'''
+	Object represents a single node in the decision tree. It's important fields are
+	leaf : bool, True if node is a leaf node, False if it is an internal node
+	left_child,right_child : type:Node , children of internal node
+	splitrule : type:SplitRule object used to route an arriving example to either the left or right node.
+	The splitrule is chosen to be the "best" according to 
+	'''
+
+	def __init__(self,labeled_examples,total_num_examples):
 		self.leaf=True
-		self.left=None
-		self.right=None
+		self.left_child=None
+		self.right_child=None
 		self.splitrule=None
-		self.num_examples= examples[0].shape[0]
+		self.num_examples= labeled_examples["trainX"].shape[0]
 
-		if self.num_examples==0:
+		if self.num_examples==0:#when does this happen?
 			self.priority=0
-			print("NEW NODE! with priority = "+ str(self.priority))
-			return
-
-		self.dominant = self.getDominantClass(examples)
-		self.misclassified=self.getMisclassified(examples)
-		self.fidelity = 1 - (float(self.misclassified)/self.num_examples)
-		self.reach = float(self.num_examples)/total_size
-		self.priority = (-1)*self.reach* (1 - self.fidelity)
-		# print(self.fidelity,self.reach,self.num_examples)
+		else:
+			self.dominant = self.get_dominant_class(labeled_examples)
+			self.misclassified=self.get_misclassified_count(labeled_examples)
+			self.fidelity = 1 - (float(self.misclassified)/self.num_examples)
+			self.reach = float(self.num_examples)/total_num_examples
+			self.priority = (-1)*self.reach* (1 - self.fidelity)
+		
 		print("NEW NODE! with priority = "+ str(self.priority))
 
-	def getDominantClass(self,examples):
-		(trainX,labels) = examples
-		counts={}
+	def get_dominant_class(self,labeled_examples):
+		'''
+		This function returns the "dominant" class of this node, i.e., the class with the highest count of the examples in this node.
+		The dominant class
+		'''
+
+		trainX = labeled_examples["trainX"]
+		labels = labeled_examples["labels"]
+		class_counts={}
+		#get count for all labels
 		for label in labels:
-			if label not in counts:
-				counts[label]=1
-				continue
-			counts[label]+=1
+			if label not in class_counts:
+				#insert in counter
+				class_counts[label]=0
+			class_counts[label]+=1
+
+		#get the class with the max count
 		max_count=0
 		max_class=0
-		for label in counts:
-			if counts[label]>max_count:
+		for label in class_counts:
+			if class_counts[label]>max_count:
 				max_class=label
-				max_count=counts[label]
-
+				max_count=class_counts[label]
 		return max_class
 
-	def getMisclassified(self,examples):
-		(trainX,labels)=examples
-		misCount=0
+	def get_misclassified_count(self,labeled_examples):
+		'''
+		Get the number of training examples misclassified by this node, if it were a leaf.
+		This is nothing but the number of examples not belonging to the dominant class.
+		This value is used to calculate the "priority" of a node, which determines when to explore/split a node.
+		'''
+
+		labels = labeled_examples["labels"]
+		num_misclassified=0
 		for label in labels:
 			if label != self.dominant:
-				misCount+=1
-		return misCount
+				num_misclassified+=1
+		return num_misclassified
 
-	def classify(self,sample):
+	def classify(self,example):
+		'''
+		Returns the predicted class for a given example.
+		For an internal node, the example is recursively routed to either the left or right child according to the **splitrule**,
+		till it descends to a leaf.
+		For a leaf, the dominant (max count) class is returned as the label
+		'''
+		
 		if self.leaf :
 			return self.dominant
-		if self.splitrule.satisfied(sample):
-			return self.left.classify(sample)
+		if self.splitrule.satisfied(example):
+			return self.left_child.classify(example)
 		else:
-			return self.right.classify(sample)
+			return self.right_child.classify(example)
 
 
 ###########################################
@@ -449,7 +476,7 @@ labels = np.zeros((trainX.shape[0]))
 for i in range(0,trainX.shape[0]):
 	labels[i]=oracle.get_oracle_label(trainX[i,:])
 	# print(labels[i])
-trainingSet=(trainX,labels)
+training_set = {"trainX":trainX,"labels":labels}
 # print(labels[0:10])
 
 
@@ -457,9 +484,9 @@ trainingSet=(trainX,labels)
 num_dim=trainX.shape[1]
 
 sortedQueue = Q.PriorityQueue()
-root = Node(trainingSet,total_size)
+root = Node(training_set,total_size)
 root.leaf=False
-sortedQueue.put((root.priority,(0,root,trainingSet,Constraints(num_dim))))
+sortedQueue.put((root.priority,(0,root,(trainX,labels),Constraints(num_dim))))
 
 # quit()
 
@@ -514,8 +541,10 @@ while not sortedQueue.empty():
 				gains[:,i]=mutual_information(xtemp[:,i],ytemp)
 			split_point = np.unravel_index(np.argmax(gains),gains.shape)
 
-	lnode= Node(examples_l,total_size)
-	rnode= Node(examples_r,total_size)
+	examples_l_dict={"trainX":examples_l[0],"labels":examples_l[1]}
+	examples_r_dict={"trainX":examples_r[0],"labels":examples_r[1]}
+	lnode= Node(examples_l_dict,total_size)
+	rnode= Node(examples_r_dict,total_size)
 	
 	node.left = lnode
 	node.right = rnode
