@@ -616,8 +616,8 @@ while not sortedQueue.empty():
 	lnode= Node(examples_l_dict,total_size)
 	rnode= Node(examples_r_dict,total_size)
 	
-	node.left = lnode
-	node.right = rnode
+	node.left_child = lnode
+	node.right_child = rnode
 	node.splitrule=srule
 	node.leaf=False
 
