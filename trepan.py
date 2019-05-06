@@ -448,6 +448,11 @@ class SplitFinder:
 		#build split rule object
 		feature_to_split=split_point[1]
 		split_value=X[split_point]
+
+		#avoid making a trivial split
+		if (X[:,feature_to_split] <= split_value).all() or (X[:,feature_to_split] >= split_value).all():
+			return None
+
 		splits=[(feature_to_split,"lte",split_value)]
 		#create a simple split rule, i.e. 1-of-1
 		srule= SplitRule(splits,1,1)
@@ -578,6 +583,12 @@ while not sortedQueue.empty():
 	# quit()
 	# print(srule.splits)
 	examples_l,examples_r = partition(examples,srule)
+
+	# Even though the trivial splits are avoided with examples_aug, 
+	# the splitrule may still split the examples trivially
+	# Trivial splits need to be avoided because the max_proportion = 0 < threshold
+	if len(examples_l[0])==0 or len(examples_r[0])==0:
+		continue
 
 	if examples_r[0].shape[0]==0 or examples_l[0].shape[0]==0:
 		el2,er2=partition(examples_aug,srule)
