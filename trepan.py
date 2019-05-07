@@ -1,46 +1,11 @@
 import numpy as np
-import pandas
-
-
 from scipy import stats
-
 import queue
 
-import pdb
-
-from keras.models import Sequential
-from keras.layers import Dense
 
 ###########################################
 
-
-
-###########################################
-def get_data(filename): # Satimage dataset
-    data = pandas.read_csv(filename, sep=r"\s+", header=None)
-    data = data.values
-
-    dataX = np.array(data[:,range(data.shape[1]-1)])
-    dataY = np.array(data[np.arange(data.shape[0]),data.shape[1]-1])
-
-    # convert dataY to one-hot, 6 classes
-    num_classes = 6
-    dataY = np.array([x-2 if x==7 else x-1 for x in dataY]) # re-named class 7 to 6(5)
-    dataY_onehot = np.zeros([dataY.shape[0], num_classes])
-    dataY_onehot[np.arange(dataY_onehot.shape[0]), dataY] = 1
-
-    return dataX, dataY_onehot
-
-def createModel (trainX,trainY,num_classes):
-	model = Sequential()
-	model.add(Dense(16, input_dim=trainX.shape[1], activation="sigmoid"))
-	model.add(Dense(16, activation="sigmoid"))
-	model.add(Dense(num_classes, activation="softmax"))
-	model.compile(loss="categorical_crossentropy", optimizer="adam", metrics=['accuracy'])
-	model.fit(trainX, trainY, epochs=5, batch_size=10) # epochs=150
-	return model
-
-###########################################
+# from run import create_model,get_data
 
 class Oracle:
 	'''
@@ -609,34 +574,3 @@ class Trepan:
 		
 		return root
 
-
-np.random.seed(200)
-from tensorflow import set_random_seed
-set_random_seed(2)
-
-trainX, trainY = get_data("data/sat.trn")
-testX, testY = get_data("data/sat.tst")
-
-num_classes = trainY.shape[1]
-num_dimensions = trainX.shape[1]
-total_num_examples = trainX.shape[0]
-print(num_classes,total_num_examples)
-
-model = createModel(trainX,trainY,num_classes)
-
-##PARAMS
-MIN_EXAMPLES_PER_NODE = 30
-MAX_NODES=200
-oracle = Oracle(model,num_classes,trainX)
-root=Trepan.build_tree(MIN_EXAMPLES_PER_NODE,MAX_NODES,trainX,oracle)
-
-fidelity=0
-n_test= testX.shape[0]
-for i in range(0,n_test):
-	lab = oracle.get_oracle_label(testX[i,:])
-	lab2 = root.classify(testX[i,:])
-	fidelity += (lab==lab2)
-
-fidelity=float(fidelity)/n_test
-
-print("Fidelity of the model is : "+str(fidelity))
