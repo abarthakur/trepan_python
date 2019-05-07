@@ -173,7 +173,15 @@ class Node:
 	leaf : bool, True if node is a leaf node, False if it is an internal node
 	left_child,right_child : type:Node , children of internal node
 	splitrule : type:SplitRule object used to route an arriving example to either the left or right node.
-	The splitrule is chosen to be the "best" according to 
+	The splitrule is chosen to be the "best" according to SplitFinder.find_best_m_of_n_split.
+
+	priority is calculated as
+	priority = reach (1- fidelity)
+	reach 	= fraction of instances that reach n
+			= num_examples/total_num_examples
+	fidelity= classification rate (wrt to ANN labels, not ground truth)
+			= 1 - (misclassified/num_examples)
+
 	'''
 
 	def __init__(self,labeled_examples,total_num_examples):
