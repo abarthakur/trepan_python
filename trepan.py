@@ -500,6 +500,116 @@ def partition(examples,srule):
 
 ###########################################
 
+
+
+class Trepan:
+	'''
+	Wrapper class for tree building algorithm TREPAN as described in 
+	"Extracting tree-structured representations of trained networks" : Craven,Shavlik 1993
+
+	Differences/Unimplemented/Implemented differently:
+	1. Not using m-of-n splits in decision tree nodes, instead a simple C4.5 split (Quinlan,1993) is used.
+	2. Input features must be numeric.
+	3. Stopping criterion is only num_nodes < MAX_NODES . Other criterion described in the paper [TODO:Description?] is unimplemented.
+	
+	Parameters
+	----------
+	MIN_EXAMPLES_PER_NODE : int 
+							corresponds to S_min in the original paper.
+	MAX_NODES 	: int
+	trainX		: numpy array 
+				: training examples of dimension (num_examples,num_dimensions) 
+	oracle 		: 	Oracle object, used to generate samples given constraints of linear inequalities on the input space,
+					It also wraps the NN model to imitate, which it uses to label the instances. 
+
+	Returns
+	--------
+	root : the root node of the built tree. Call root.classify(single_example) to get the prediction of the imitating tree. 
+		   single_example must have dimension (num_examples,num_dimensions)
+	'''
+
+	@staticmethod
+	def build_tree(MIN_EXAMPLES_PER_NODE,MAX_NODES,trainX,oracle):
+		total_num_examples = trainX.shape[0]
+		num_dimensions = trainX.shape[1]
+		#generate labels from oracle
+		labels = np.zeros((trainX.shape[0]))
+		for i in range(0,trainX.shape[0]):
+			labels[i]=oracle.get_oracle_label(trainX[i,:])
+
+		all_examples=(trainX,labels)
+		all_examples_dict={"trainX":trainX,"labels":labels}
+
+		#initialize queue with root
+		sortedQueue = queue.PriorityQueue()
+		root = Node(all_examples_dict,total_num_examples)
+		sortedQueue.put((root.priority,0,root,all_examples,Constraints(num_dimensions)))
+
+		num_nodes=1
+		while not sortedQueue.empty():
+			(p, tiebreaker, node, examples, constraints)=sortedQueue.get()
+			num_examples=examples[0].shape[0]
+			assert(node.leaf)
+			assert(num_examples>0)
+
+			print("############PROCESSING "+str(num_examples)+" #############")
+
+			if num_examples<MIN_EXAMPLES_PER_NODE:
+				print("NEED EXTRA")
+				(trainX,labels)= examples
+				num_required = MIN_EXAMPLES_PER_NODE - num_examples
+				(trainX_oracle,labels_oracle) = oracle.generate_constrained_examples_with_labels(constraints,num_required)
+				trainX_aug = np.concatenate([trainX,trainX_oracle],axis=0)
+				labels_aug = np.concatenate([labels,labels_oracle],axis=0)
+				examples_aug=(trainX_aug,labels_aug)		
+			else :
+				print("ALL OK")
+				examples_aug = examples
+
+			srule = SplitFinder.find_best_m_of_n_split(examples_aug)
+			#a good split was not found, so keep as leaf
+			if not srule:
+				continue
+			examples_l,examples_r = partition(examples,srule)
+
+			#even though the trivial splits are avoided with examples_aug, 
+			#the splitrule may still split the examples trivially
+			#trivial split, so keep as leaf
+			if len(examples_l[0])==0 or len(examples_r[0])==0:
+				continue
+
+			#TODO: Add stop criterion thresholding the proportion of dominant class, similar to 
+			
+			#number of nodes will exceed MAX_NODES if we make the split, so keep as leaf
+			if (MAX_NODES - num_nodes<2):
+				continue
+
+			#split the node, and make as internal
+			examples_l_dict={"trainX":examples_l[0],"labels":examples_l[1]}
+			examples_r_dict={"trainX":examples_r[0],"labels":examples_r[1]}
+			left_child= Node(examples_l_dict,total_num_examples)
+			right_child= Node(examples_r_dict,total_num_examples)
+			node.left_child = left_child
+			node.right_child = right_child
+			node.splitrule=srule
+			node.leaf=False
+
+			#add child nodes
+			constraints_left = constraints.copy()
+			constraints_left.addRule(srule)
+			priority = left_child.priority
+			sortedQueue.put((priority,num_nodes,left_child,examples_l,constraints_left))
+			num_nodes+=1
+			
+			constraints_right = constraints.copy()
+			constraints_right .addRule(srule.invert())
+			priority = right_child.priority
+			sortedQueue.put((priority,num_nodes,right_child,examples_r,constraints_right))
+			num_nodes+=1
+		
+		return root
+
+
 np.random.seed(200)
 from tensorflow import set_random_seed
 set_random_seed(2)
@@ -518,83 +628,7 @@ model = createModel(trainX,trainY,num_classes)
 MIN_EXAMPLES_PER_NODE = 30
 MAX_NODES=200
 oracle = Oracle(model,num_classes,trainX)
-
-#generate labels from oracle
-labels = np.zeros((trainX.shape[0]))
-for i in range(0,trainX.shape[0]):
-	labels[i]=oracle.get_oracle_label(trainX[i,:])
-
-all_examples=(trainX,labels)
-all_examples_dict={"trainX":trainX,"labels":labels}
-
-#initialize queue with root
-sortedQueue = queue.PriorityQueue()
-root = Node(all_examples_dict,total_num_examples)
-sortedQueue.put((root.priority,0,root,all_examples,Constraints(num_dimensions)))
-
-num_nodes=1
-while not sortedQueue.empty():
-	(p, tiebreaker, node, examples, constraints)=sortedQueue.get()
-	num_examples=examples[0].shape[0]
-	assert(node.leaf)
-	assert(num_examples>0)
-
-	print("############PROCESSING "+str(num_examples)+" #############")
-
-	if num_examples<MIN_EXAMPLES_PER_NODE:
-		print("NEED EXTRA")
-		(trainX,labels)= examples
-		num_required = MIN_EXAMPLES_PER_NODE - num_examples
-		(trainX_oracle,labels_oracle) = oracle.generate_constrained_examples_with_labels(constraints,num_required)
-		trainX_aug = np.concatenate([trainX,trainX_oracle],axis=0)
-		labels_aug = np.concatenate([labels,labels_oracle],axis=0)
-		examples_aug=(trainX_aug,labels_aug)		
-	else :
-		print("ALL OK")
-		examples_aug = examples
-
-	srule = SplitFinder.find_best_m_of_n_split(examples_aug)
-	#a good split was not found, so keep as leaf
-	if not srule:
-		continue
-	examples_l,examples_r = partition(examples,srule)
-
-	#even though the trivial splits are avoided with examples_aug, 
-	#the splitrule may still split the examples trivially
-	#trivial split, so keep as leaf
-	if len(examples_l[0])==0 or len(examples_r[0])==0:
-		continue
-
-	#TODO: Add stop criterion thresholding the proportion of dominant class, similar to 
-	
-	#number of nodes will exceed MAX_NODES if we make the split, so keep as leaf
-	if (MAX_NODES - num_nodes<2):
-		continue
-
-	#split the node, and make as internal
-	examples_l_dict={"trainX":examples_l[0],"labels":examples_l[1]}
-	examples_r_dict={"trainX":examples_r[0],"labels":examples_r[1]}
-	left_child= Node(examples_l_dict,total_num_examples)
-	right_child= Node(examples_r_dict,total_num_examples)
-	node.left_child = left_child
-	node.right_child = right_child
-	node.splitrule=srule
-	node.leaf=False
-
-	#add child nodes
-	constraints_left = constraints.copy()
-	constraints_left.addRule(srule)
-	priority = left_child.priority
-	sortedQueue.put((priority,num_nodes,left_child,examples_l,constraints_left))
-	num_nodes+=1
-	
-	constraints_right = constraints.copy()
-	constraints_right .addRule(srule.invert())
-	priority = right_child.priority
-	sortedQueue.put((priority,num_nodes,right_child,examples_r,constraints_right))
-	num_nodes+=1
-	
-
+root=Trepan.build_tree(MIN_EXAMPLES_PER_NODE,MAX_NODES,trainX,oracle)
 
 fidelity=0
 n_test= testX.shape[0]
