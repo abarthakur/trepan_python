@@ -221,9 +221,9 @@ class SplitFinder:
 		return gains
 
 	@staticmethod
-	def find_best_binary_split(examples):
+	def find_best_single_feature_split(examples):
 		'''
-		Find the best binary split along a single axis, according to maximum information gain.
+		Find the best  split along a single axis, according to maximum information gain.
 		This is the same split as used in the C4.5 algorithm, Quinlan 1993
 
 		Returns
@@ -270,7 +270,7 @@ class SplitFinder:
 		TODO: Right now just returns a binary split
 		'''
 
-		seed= SplitFinder.find_best_binary_split(examples)
+		seed= SplitFinder.find_best_single_feature_split(examples)
 		##TODO find best m-of-n split with hill climbing method, with C4.5 split as 
 		srule=seed
 		return srule
