@@ -94,39 +94,58 @@ class Oracle:
 ###########################################
 
 class SplitRule:
-	#<= is left , > is right
-	#m of n split
+	'''
+	Class representing a splitting/partitioning function.
+	The function is particularly an m-of-n expression which is composed of n boolean value expressions,
+	and which is satisfied by an example if at least m out of n expressions is satisfied.
+	The boolean expressions are linear inequalities/equalities.
+
+	Keeps a list of upper and lower bounds on each feature. Used by constraints object.
+
+	Parameters
+	---------
+	splits	: List[(feature_to_split,operator,split_value)]
+	m		: int (minimum number of constraints to satisfy for SplitRule to be satisfied)
+	n		: int , number of constraints this splitrule is composed of
+	'''
 
 	def __init__(self,splits,m,n):
 		self.splits=splits
 		self.m=m
 		self.n=n
 		self.op_dict= {"gte":self.gte,"lte":self.lte}
-		self.processSplits()
+		self.process_splits()
 
 
-	def processSplits(self):
+	def process_splits(self):
 		self.max_dict={}
 		self.min_dict={}
-		for (attr,op_string,val) in self.splits:
-			if op_string in ["lte" ,"lt"]:
-				if attr not in self.max_dict:
-					self.max_dict[attr]=val
-				self.max_dict[attr] = max(self.max_dict[attr],val)
-			elif op_string in ["gte","gt"]:
-				if attr not in self.min_dict:
-					self.min_dict[attr]=val
-				self.min_dict[attr] = min(self.min_dict[attr],val)
+		for (feature_to_split,operator,split_value) in self.splits:
+			if operator in ["lte" ,"lt"]:
+				if feature_to_split not in self.max_dict:
+					self.max_dict[feature_to_split]=split_value
+				self.max_dict[feature_to_split] = max(self.max_dict[feature_to_split],split_value)
+			elif operator in ["gte","gt"]:
+				if feature_to_split not in self.min_dict:
+					self.min_dict[feature_to_split]=split_value
+				self.min_dict[feature_to_split] = min(self.min_dict[feature_to_split],split_value)
 
 	#for building constraints
 	def invert(self):
-		splits2= []
-		inverse = {"gte":"lt","gt":"lte","lte":"gt","lt":"gte"}
-		for (attr,op_string,val) in self.splits:
-			op_string=inverse[op_string]
-			splits2.append((attr,op_string,val))
-		s2 = SplitRule(splits2,self.m,self.n)
-		return s2
+		'''
+		Returns the "inverse" of this SplitRule object. 
+		Does this by inverting each of the individual constraints.
+		While at each level, only one (left child's) split is evaluated, 
+		We need to pass the inverse to the right child to add to its list of constraints.
+		Note: What is the inverse of an m-of-n split? 
+		'''
+		inverted_splits= []
+		inverse_map = {"gte":"lt","gt":"lte","lte":"gt","lt":"gte"}
+		for (feature_to_split,operator,val) in self.splits:
+			inverse_operator=inverse_map[operator]
+			inverted_splits.append((feature_to_split,inverse_operator,val))
+		invsplit = SplitRule(inverted_splits,self.m,self.n)
+		return invsplit
 
 
 	def gte(self,arg1, arg2):
@@ -138,17 +157,27 @@ class SplitRule:
 	def gt(self,arg1,arg2):
 		return arg1 > arg2
 
-	def satisfied(self,sample):
-		sat=0
 
+	def satisfied(self,sample):
+		'''
+		Evaluates the splitrule given a sample.
+		
+		Parameters
+		----------
+		sample : np array of shape (num_features)
+
+		Returns
+		---------
+		True if at least m constraints are satisfied
+		False otherwise
+		'''
+		num_satisfied=0
 		for split in self.splits:
-			(attr,op_string,val)=split
+			(feature_idx,op_string,val)=split
 			op = self.op_dict[op_string]
-			if op(sample[attr],val):
-				sat+=1
-			# print(attr,val)
-			# print(sample[attr])
-		if sat < self.m:
+			if op(sample[feature_idx],val):
+				num_satisfied+=1
+		if num_satisfied < self.m:
 			return False
 		else:
 			return True
