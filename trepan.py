@@ -484,25 +484,27 @@ class Trepan:
 	1. Not using m-of-n splits in decision tree nodes, instead a simple C4.5 split (Quinlan,1993) is used.
 	2. Input features must be numeric.
 	3. Stopping criterion is only num_nodes < MAX_NODES . Other criterion described in the paper [TODO:Description?] is unimplemented.
-	
-	Parameters
-	----------
-	MIN_EXAMPLES_PER_NODE : int 
-							corresponds to S_min in the original paper.
-	MAX_NODES 	: int
-	trainX		: numpy array 
-				: training examples of dimension (num_examples,num_dimensions) 
-	oracle 		: 	Oracle object, used to generate samples given constraints of linear inequalities on the input space,
-					It also wraps the NN model to imitate, which it uses to label the instances. 
-
-	Returns
-	--------
-	root : the root node of the built tree. Call root.classify(single_example) to get the prediction of the imitating tree. 
-		   single_example must have dimension (num_examples,num_dimensions)
 	'''
 
 	@staticmethod
 	def build_tree(MIN_EXAMPLES_PER_NODE,MAX_NODES,trainX,oracle):
+		'''			
+			Parameters
+			----------
+			MIN_EXAMPLES_PER_NODE : int 
+									corresponds to S_min in the original paper.
+			MAX_NODES 	: int
+			trainX		: numpy array 
+						: training examples of dimension (num_examples,num_dimensions) 
+			oracle 		: 	Oracle object, used to generate samples given constraints of linear inequalities on the input space,
+							It also wraps the NN model to imitate, which it uses to label the instances. 
+
+			Returns
+			--------
+			root : the root node of the built tree. Call root.classify(single_example) to get the prediction of the imitating tree. 
+				single_example must have dimension (num_examples,num_dimensions)
+		'''
+
 		total_num_examples = trainX.shape[0]
 		num_dimensions = trainX.shape[1]
 		#generate labels from oracle
